@@ -91,15 +91,15 @@ def verify_request_authenticity():
         if not request.headers.get(header):
             return False, f"Missing {header} header"
     
-    # Check for suspicious user agents
+    # Check for suspicious user agents (even spoofed ones)
     user_agent = request.headers.get('User-Agent', '').lower()
     suspicious_agents = ['curl', 'wget', 'python-requests', 'postman', 'insomnia']
     for agent in suspicious_agents:
         if agent in user_agent:
             return False, f"Suspicious user agent: {agent}"
     
-    # CSRF Protection: Check referrer/origin
-    referrer = request.headers.get('Referer', '')
+    # CSRF Protection: Check referrer/origin - BOTH must be valid
+    referrer = request.headers.get('Referer', '')  # Note: HTTP spec has this typo
     origin = request.headers.get('Origin', '')
     
     # Allow requests from your legitimate domains
@@ -112,28 +112,32 @@ def verify_request_authenticity():
     ]
     
     # Check if request comes from an allowed domain
-    valid_referrer = any(referrer.startswith(domain) for domain in allowed_domains)
-    valid_origin = any(origin == domain for domain in allowed_domains)
+    valid_referrer = any(referrer.startswith(domain) for domain in allowed_domains) if referrer else False
+    valid_origin = any(origin == domain for domain in allowed_domains) if origin else False
     
-    # For direct API calls without referrer (like curl), block them
-    if not referrer and not origin:
-        return False, "Direct API calls not allowed - must come from the website"
+    # STRICTER: Require BOTH referrer AND origin, or reject
+    if not referrer or not origin:
+        return False, "Missing required security headers (Referer and Origin required)"
     
-    # If referrer or origin is present, it must be from allowed domains
-    if referrer and not valid_referrer:
+    if not valid_referrer:
         return False, f"Invalid referrer: {referrer}"
     
-    if origin and not valid_origin:
+    if not valid_origin:
         return False, f"Invalid origin: {origin}"
+    
+    # Additional browser-specific checks
+    if not request.headers.get('Accept'):
+        return False, "Missing Accept header"
+    
+    # Check for browser-specific security headers
+    sec_fetch_site = request.headers.get('Sec-Fetch-Site')
+    if sec_fetch_site and sec_fetch_site not in ['same-origin', 'same-site']:
+        return False, f"Invalid Sec-Fetch-Site: {sec_fetch_site}"
     
     # Check for API secret in headers (for legitimate API usage)
     api_secret = request.headers.get('X-API-Secret')
     if api_secret == API_SECRET:
         return True, "Valid API secret provided"
-    
-    # Check if request looks like it comes from a browser
-    if not request.headers.get('Accept'):
-        return False, "Missing Accept header"
     
     return True, "Request appears legitimate"
 
@@ -341,12 +345,16 @@ def translate():
     if not authentic:
         return jsonify({'error': f'Request blocked: {auth_reason}'}), 403
 
-    # Security: Validate session token
+    # Security: Validate session token - NO EXCEPTIONS
     data = request.get_json(force=True) or {}
     session_token = data.get('session_token') or request.headers.get('X-Session-Token')
     
-    if not session_token or not validate_session_token(session_token):
-        return jsonify({'error': 'Invalid or expired session token'}), 401
+    # MANDATORY session token - no bypasses allowed
+    if not session_token:
+        return jsonify({'error': 'Session token required - get one from /api/session'}), 401
+    
+    if not validate_session_token(session_token):
+        return jsonify({'error': 'Invalid or expired session token - get a new one from /api/session'}), 401
 
     user_text = (data.get('text') or '').strip()
     tone = (data.get('tone') or '').strip().lower() or None
