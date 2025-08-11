@@ -105,7 +105,57 @@ def clean_response(text: str) -> str:
     return text
 
 
+def sanitize_user_input(text: str) -> str:
+    """Sanitize user input to prevent prompt injection attacks"""
+    if not text:
+        return text
+    
+    # Remove common prompt injection patterns
+    dangerous_patterns = [
+        r'ignore\s+previous\s+instructions?',
+        r'ignore\s+above',
+        r'forget\s+previous\s+instructions?',
+        r'forget\s+above',
+        r'system\s*:',
+        r'assistant\s*:',
+        r'human\s*:',
+        r'user\s*:',
+        r'prompt\s*:',
+        r'instructions?\s*:',
+        r'override',
+        r'new\s+task',
+        r'new\s+instruction',
+        r'role\s*:',
+        r'you\s+are\s+now',
+        r'act\s+as',
+        r'pretend\s+to\s+be',
+        r'simulate',
+        r'<\s*system\s*>',
+        r'<\s*\/\s*system\s*>',
+        r'<\s*prompt\s*>',
+        r'<\s*\/\s*prompt\s*>',
+    ]
+    
+    # Remove dangerous patterns (case insensitive)
+    cleaned_text = text
+    for pattern in dangerous_patterns:
+        cleaned_text = re.sub(pattern, '', cleaned_text, flags=re.IGNORECASE)
+    
+    # Limit length to prevent abuse
+    if len(cleaned_text) > 500:
+        cleaned_text = cleaned_text[:500]
+    
+    # Remove excessive newlines and clean whitespace
+    cleaned_text = re.sub(r'\n\s*\n\s*\n+', '\n\n', cleaned_text)
+    cleaned_text = cleaned_text.strip()
+    
+    return cleaned_text
+
+
 def build_prompt(user_text: str, tone: str | None) -> str:
+    # Sanitize user input first
+    sanitized_text = sanitize_user_input(user_text)
+    
     tone_text = ""
     if tone == "poetic":
         tone_text = "\nMake the tone more poetic and elaborate, but do not use ** ** markers."
@@ -115,7 +165,7 @@ def build_prompt(user_text: str, tone: str | None) -> str:
     prompt_lines = [f"SYSTEM: {SYSTEM_PROMPT}{tone_text}\n\n"]
     for m, f in FEW_SHOT:
         prompt_lines.append(f"Modern: {m}\nMedieval: {f}\n\n")
-    prompt_lines.append(f"Modern: {user_text}\nMedieval:")
+    prompt_lines.append(f"Modern: {sanitized_text}\nMedieval:")
     return "".join(prompt_lines)
 
 
@@ -134,6 +184,14 @@ def translate():
 
     if not user_text:
         return jsonify({'error': 'No text provided'}), 400
+    
+    # Additional validation
+    if len(user_text) > 500:
+        return jsonify({'error': 'Text too long. Please limit to 500 characters.'}), 400
+    
+    # Check for empty or suspicious input after basic cleaning
+    if not user_text or len(user_text.strip()) < 1:
+        return jsonify({'error': 'Please provide valid text to translate'}), 400
 
     prompt = build_prompt(user_text, tone)
 
