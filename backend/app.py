@@ -299,7 +299,7 @@ def build_prompt(user_text: str, tone: str | None) -> str:
 @app.route("/healthz", methods=["GET"])
 @app.route("/api/healthz", methods=["GET"])
 def healthz():
-    return jsonify({"status": "ok", "model": GEMINI_MODEL})
+    return jsonify({"status": "ok", "model": GEMINI_MODEL, "security": "v2.0"})
 
 
 @app.route("/session", methods=["GET"])
