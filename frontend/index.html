@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Faux Medieval Translator</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <main class="container">
+      <h1>Faux Medieval Translator</h1>
+      <p class="tagline">Type modern English — receive a faux medieval / fantasy-style rewrite.</p>
+
+      <label for="inputText">Modern English</label>
+      <textarea id="inputText" placeholder="Type your text here..." rows="6"></textarea>
+
+      <div class="controls">
+        <button id="translateBtn">Translate</button>
+        <select id="toneSelect" title="Tone">
+          <option value="default">Standard Faux Medieval</option>
+          <option value="poetic">More Poetic</option>
+          <option value="concise">Concise/Functional</option>
+        </select>
+        <button id="copyBtn" class="secondary">Copy Output</button>
+      </div>
+
+      <label for="outputText">Faux Medieval</label>
+      <textarea id="outputText" rows="6" readonly></textarea>
+
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
