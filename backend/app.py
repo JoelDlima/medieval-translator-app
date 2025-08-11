@@ -3,6 +3,9 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import re
+from datetime import datetime, timedelta
+from collections import defaultdict
+import hashlib
 
 # Config - Gemini API
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -11,8 +14,80 @@ if not GEMINI_API_KEY:
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 GEMINI_BASE_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 
+# Security Config
+API_SECRET = os.environ.get("API_SECRET", "medieval-translator-2025")  # Change this!
+RATE_LIMIT_PER_MINUTE = 10  # Max requests per minute per IP
+RATE_LIMIT_PER_HOUR = 100   # Max requests per hour per IP
+
 app = Flask(__name__)
 CORS(app)
+
+# Rate limiting storage (in production, use Redis)
+rate_limit_storage = defaultdict(list)
+
+def get_client_ip():
+    """Get the real client IP address"""
+    if request.headers.get('X-Forwarded-For'):
+        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
+    elif request.headers.get('X-Real-IP'):
+        return request.headers.get('X-Real-IP')
+    else:
+        return request.remote_addr
+
+def is_rate_limited(ip):
+    """Check if IP is rate limited"""
+    now = datetime.now()
+    minute_ago = now - timedelta(minutes=1)
+    hour_ago = now - timedelta(hours=1)
+    
+    # Clean old entries
+    rate_limit_storage[ip] = [
+        timestamp for timestamp in rate_limit_storage[ip]
+        if timestamp > hour_ago
+    ]
+    
+    # Count recent requests
+    recent_requests = rate_limit_storage[ip]
+    requests_last_minute = sum(1 for req in recent_requests if req > minute_ago)
+    requests_last_hour = len(recent_requests)
+    
+    # Check limits
+    if requests_last_minute >= RATE_LIMIT_PER_MINUTE:
+        return True, f"Rate limit exceeded: {requests_last_minute}/{RATE_LIMIT_PER_MINUTE} per minute"
+    if requests_last_hour >= RATE_LIMIT_PER_HOUR:
+        return True, f"Rate limit exceeded: {requests_last_hour}/{RATE_LIMIT_PER_HOUR} per hour"
+    
+    return False, None
+
+def record_request(ip):
+    """Record a request for rate limiting"""
+    rate_limit_storage[ip].append(datetime.now())
+
+def verify_request_authenticity():
+    """Basic checks to ensure request comes from legitimate usage"""
+    # Check for required headers that browsers send
+    required_headers = ['User-Agent']
+    for header in required_headers:
+        if not request.headers.get(header):
+            return False, f"Missing {header} header"
+    
+    # Check for suspicious user agents
+    user_agent = request.headers.get('User-Agent', '').lower()
+    suspicious_agents = ['curl', 'wget', 'python-requests', 'postman']
+    for agent in suspicious_agents:
+        if agent in user_agent:
+            return False, f"Suspicious user agent: {agent}"
+    
+    # Check for API secret in headers (for legitimate API usage)
+    api_secret = request.headers.get('X-API-Secret')
+    if api_secret == API_SECRET:
+        return True, "Valid API secret provided"
+    
+    # Check if request looks like it comes from a browser
+    if not request.headers.get('Accept'):
+        return False, "Missing Accept header"
+    
+    return True, "Request appears legitimate"
 
 SYSTEM_PROMPT = (
     "You are a medieval English scribe and storyteller in a fantasy realm. "
@@ -178,18 +253,26 @@ def healthz():
 @app.route('/translate', methods=['POST'])
 @app.route('/api/translate', methods=['POST'])
 def translate():
+    # Security: Rate limiting and authenticity checks
+    client_ip = get_client_ip()
+    limited, reason = is_rate_limited(client_ip)
+    if limited:
+        return jsonify({'error': reason}), 429
+    record_request(client_ip)
+
+    # Security: Check request authenticity
+    authentic, auth_reason = verify_request_authenticity()
+    if not authentic:
+        return jsonify({'error': f'Request blocked: {auth_reason}'}), 403
+
     data = request.get_json(force=True) or {}
     user_text = (data.get('text') or '').strip()
     tone = (data.get('tone') or '').strip().lower() or None
 
     if not user_text:
         return jsonify({'error': 'No text provided'}), 400
-    
-    # Additional validation
     if len(user_text) > 500:
         return jsonify({'error': 'Text too long. Please limit to 500 characters.'}), 400
-    
-    # Check for empty or suspicious input after basic cleaning
     if not user_text or len(user_text.strip()) < 1:
         return jsonify({'error': 'Please provide valid text to translate'}), 400
 
