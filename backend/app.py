@@ -119,11 +119,13 @@ def build_prompt(user_text: str, tone: str | None) -> str:
     return "".join(prompt_lines)
 
 
+@app.route("/healthz", methods=["GET"])
 @app.route("/api/healthz", methods=["GET"])
 def healthz():
     return jsonify({"status": "ok", "model": GEMINI_MODEL})
 
 
+@app.route('/translate', methods=['POST'])
 @app.route('/api/translate', methods=['POST'])
 def translate():
     data = request.get_json(force=True) or {}
@@ -179,6 +181,5 @@ def translate():
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
 
-# Vercel serverless function handler
-def handler(request):
-    return app(request.environ, request.start_response)
+# For Vercel
+application = app

@@ -1,13 +1,8 @@
 {
-  "functions": {
-    "backend/app.py": {
-      "runtime": "@vercel/python"
-    }
-  },
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "backend/app.py"
+      "dest": "/api/index.py"
     },
     {
       "src": "/(.*)",
