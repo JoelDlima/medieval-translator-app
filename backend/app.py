@@ -24,6 +24,26 @@ CORS(app)
 
 # Rate limiting storage (in production, use Redis)
 rate_limit_storage = defaultdict(list)
+# Session token storage (in production, use Redis with expiration)
+session_tokens = defaultdict(datetime)
+
+def generate_session_token():
+    """Generate a unique session token"""
+    import secrets
+    return secrets.token_urlsafe(32)
+
+def validate_session_token(token):
+    """Validate if session token is valid and not expired"""
+    if not token or token not in session_tokens:
+        return False
+    
+    # Check if token is expired (30 minutes)
+    token_time = session_tokens[token]
+    if datetime.now() - token_time > timedelta(minutes=30):
+        del session_tokens[token]  # Clean up expired token
+        return False
+    
+    return True
 
 def get_client_ip():
     """Get the real client IP address"""
@@ -64,7 +84,7 @@ def record_request(ip):
     rate_limit_storage[ip].append(datetime.now())
 
 def verify_request_authenticity():
-    """Basic checks to ensure request comes from legitimate usage"""
+    """Enhanced security checks including referrer validation"""
     # Check for required headers that browsers send
     required_headers = ['User-Agent']
     for header in required_headers:
@@ -73,10 +93,38 @@ def verify_request_authenticity():
     
     # Check for suspicious user agents
     user_agent = request.headers.get('User-Agent', '').lower()
-    suspicious_agents = ['curl', 'wget', 'python-requests', 'postman']
+    suspicious_agents = ['curl', 'wget', 'python-requests', 'postman', 'insomnia']
     for agent in suspicious_agents:
         if agent in user_agent:
             return False, f"Suspicious user agent: {agent}"
+    
+    # CSRF Protection: Check referrer/origin
+    referrer = request.headers.get('Referer', '')
+    origin = request.headers.get('Origin', '')
+    
+    # Allow requests from your legitimate domains
+    allowed_domains = [
+        'https://medieval-translator-app.vercel.app',
+        'https://medieval-translator-app-joeldlimas-projects.vercel.app', 
+        'https://medieval-translator-app-git-main-joeldlimas-projects.vercel.app',
+        'http://localhost:3000',  # For local development
+        'http://127.0.0.1:5000',  # For local Flask development
+    ]
+    
+    # Check if request comes from an allowed domain
+    valid_referrer = any(referrer.startswith(domain) for domain in allowed_domains)
+    valid_origin = any(origin == domain for domain in allowed_domains)
+    
+    # For direct API calls without referrer (like curl), block them
+    if not referrer and not origin:
+        return False, "Direct API calls not allowed - must come from the website"
+    
+    # If referrer or origin is present, it must be from allowed domains
+    if referrer and not valid_referrer:
+        return False, f"Invalid referrer: {referrer}"
+    
+    if origin and not valid_origin:
+        return False, f"Invalid origin: {origin}"
     
     # Check for API secret in headers (for legitimate API usage)
     api_secret = request.headers.get('X-API-Secret')
@@ -250,6 +298,34 @@ def healthz():
     return jsonify({"status": "ok", "model": GEMINI_MODEL})
 
 
+@app.route("/session", methods=["GET"])
+@app.route("/api/session", methods=["GET"])
+def get_session():
+    """Generate a session token for legitimate website usage"""
+    # Basic checks to ensure request comes from the website
+    referrer = request.headers.get('Referer', '')
+    origin = request.headers.get('Origin', '')
+    
+    allowed_domains = [
+        'https://medieval-translator-app.vercel.app',
+        'https://medieval-translator-app-joeldlimas-projects.vercel.app', 
+        'https://medieval-translator-app-git-main-joeldlimas-projects.vercel.app',
+        'http://localhost:3000',
+        'http://127.0.0.1:5000',
+    ]
+    
+    valid_referrer = any(referrer.startswith(domain) for domain in allowed_domains)
+    valid_origin = any(origin == domain for domain in allowed_domains)
+    
+    if not (valid_referrer or valid_origin):
+        return jsonify({'error': 'Session tokens only available from the website'}), 403
+    
+    token = generate_session_token()
+    session_tokens[token] = datetime.now()
+    
+    return jsonify({'token': token})
+
+
 @app.route('/translate', methods=['POST'])
 @app.route('/api/translate', methods=['POST'])
 def translate():
@@ -260,12 +336,18 @@ def translate():
         return jsonify({'error': reason}), 429
     record_request(client_ip)
 
-    # Security: Check request authenticity
+    # Security: Check request authenticity (referrer/origin validation)
     authentic, auth_reason = verify_request_authenticity()
     if not authentic:
         return jsonify({'error': f'Request blocked: {auth_reason}'}), 403
 
+    # Security: Validate session token
     data = request.get_json(force=True) or {}
+    session_token = data.get('session_token') or request.headers.get('X-Session-Token')
+    
+    if not session_token or not validate_session_token(session_token):
+        return jsonify({'error': 'Invalid or expired session token'}), 401
+
     user_text = (data.get('text') or '').strip()
     tone = (data.get('tone') or '').strip().lower() or None
 
