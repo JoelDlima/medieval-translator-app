@@ -6,14 +6,23 @@ import re
 from datetime import datetime, timedelta
 from collections import defaultdict
 import hashlib
+import hmac
 
 # Config - Gemini API
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyDmi7DvRPq7cFr6hSCVakebvTLIeEOj218")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise RuntimeError(
+        "GEMINI_API_KEY is not set. Put it in the environment or a .env file. "
+        "Never inline it as a default here - this repository is public, and a "
+        "key committed to it is scraped within minutes."
+    )
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
-GEMINI_BASE_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+GEMINI_BASE_URL = (
+    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+)  # key travels in the x-goog-api-key header, not the query string
 
 # Security Config
-API_SECRET = os.environ.get("API_SECRET", "medieval-translator-2025")  # Change this!
+API_SECRET = os.environ.get("API_SECRET")  # optional; unset disables the header check
 RATE_LIMIT_PER_MINUTE = 10  # Max requests per minute per IP
 RATE_LIMIT_PER_HOUR = 100   # Max requests per hour per IP
 
@@ -134,7 +143,7 @@ def verify_request_authenticity():
     
     # Check for API secret in headers (for legitimate API usage)
     api_secret = request.headers.get('X-API-Secret')
-    if api_secret == API_SECRET:
+    if API_SECRET and api_secret and hmac.compare_digest(api_secret, API_SECRET):
         return True, "Valid API secret provided"
     
     return True, "Request appears legitimate"
@@ -369,7 +378,8 @@ def translate():
     try:
         # Use Gemini API to generate text
         headers = {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'x-goog-api-key': GEMINI_API_KEY,
         }
         
         payload = {
